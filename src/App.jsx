@@ -22,7 +22,7 @@ export default function App() {
   const [category, setCategory] = useState('主菜')
   const [ingredients, setIngredients] = useState('')
 
-  // 編輯食譜用的狀態 (記錄目前正在編輯哪一個食譜 ID)
+  // 編輯食譜用的狀態
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
   const [editCategory, setEditCategory] = useState('主菜')
@@ -85,6 +85,37 @@ export default function App() {
       ...weeklyPlans,
       [weekKey]: newDayData
     })
+  }
+
+  const handleClearWeekPlan = () => {
+    if (window.confirm('確定要清空本週所有的菜單排程嗎？')) {
+      updateCurrentWeekPlan({
+        星期一: [], 星期二: [], 星期三: [], 星期四: [], 星期五: [], 星期六: [], 星期日: []
+      })
+    }
+  }
+
+  const handleCopyLastWeekPlan = () => {
+    const prevWeekDate = new Date(currentWeekStart)
+    prevWeekDate.setDate(prevWeekDate.getDate() - 7)
+    const prevWeekKey = prevWeekDate.toISOString().split('T')[0]
+
+    const prevWeekPlanData = weeklyPlans[prevWeekKey]
+    if (!prevWeekPlanData) {
+      alert('找不到上一週的菜單排程記錄！')
+      return
+    }
+
+    if (window.confirm('確定要將上一週的菜單排程複製到這一週嗎？這會覆蓋目前的本週排程。')) {
+      const duplicatedPlan = {}
+      Object.keys(prevWeekPlanData).forEach(dayName => {
+        duplicatedPlan[dayName] = prevWeekPlanData[dayName].map(item => ({
+          ...item,
+          scheduleId: Date.now() + Math.random()
+        }))
+      })
+      updateCurrentWeekPlan(duplicatedPlan)
+    }
   }
 
   // 4. 採買清單勾選狀態
@@ -211,14 +242,15 @@ export default function App() {
   endDateObj.setDate(endDateObj.getDate() + 6)
   const endDateStr = `${endDateObj.getMonth() + 1}/${endDateObj.getDate()}`
 
-  const navButtonStyle = {
-    padding: '0.4rem 0.8rem',
+const navButtonStyle = {
+    padding: '0.25rem 0.5rem', // ← 改小內距（例如原本是 0.4rem 0.9rem）
     background: '#e2e8f0',
     border: '1px solid #94a3b8',
     borderRadius: '4px',
     cursor: 'pointer',
     fontWeight: 'bold',
-    color: '#1e293b'
+    color: '#1e293b',
+    fontSize: '0.8rem' // ← 改小字體大小（例如原本是 0.9rem）
   }
 
   const scheduleBtnStyle = {
@@ -239,8 +271,20 @@ export default function App() {
     return matchesSearch && matchesCategory
   })
 
-  // 智慧採買清單累加邏輯
-  const getAggregatedShoppingList = () => {
+  const categorizeIngredientName = (name) => {
+    const lower = name.toLowerCase()
+    if (/肉|豬|牛|雞|魚|蝦|蛤|海鮮|蛋|排骨|培根|火腿|花枝/.test(lower)) {
+      return '肉品海鮮類'
+    } else if (/菜|蔥|蒜|薑|洋蔥|番茄|馬鈴薯|紅蘿蔔|菇|瓜|豆|椒|葉|高麗菜|花椰菜/.test(lower)) {
+      return '蔬菜生鮮類'
+    } else if (/鹽|糖|醬油|醋|油|沙拉油|香油|米酒|豆瓣醬|沙茶|胡椒|五香|太白粉|辣椒/.test(lower)) {
+      return '調味與辛香料'
+    } else {
+      return '其他/乾貨類'
+    }
+  }
+
+  const getCategorizedShoppingList = () => {
     const ingredientMap = {}
 
     Object.values(currentWeekPlan).forEach(dayItems => {
@@ -258,12 +302,15 @@ export default function App() {
             const nameKey = match[1].trim()
             const amount = parseFloat(match[2])
             const unit = match[4] || ''
-            const numericKey = nameKey
 
-            if (!ingredientMap[numericKey]) {
-              ingredientMap[numericKey] = { name: nameKey, totalAmount: 0, unit: unit }
+            if (!ingredientMap[nameKey]) {
+              ingredientMap[nameKey] = { name: nameKey, totalAmount: 0, unit: unit }
+            } else {
+              if (!ingredientMap[nameKey].unit && unit) {
+                ingredientMap[nameKey].unit = unit
+              }
             }
-            ingredientMap[numericKey].totalAmount += amount
+            ingredientMap[nameKey].totalAmount += amount
           } else {
             const mapKey = trimmed
             if (!ingredientMap[mapKey]) {
@@ -275,20 +322,45 @@ export default function App() {
       })
     })
 
-    return Object.values(ingredientMap).map(item => {
+    const categories = {
+      '肉品海鮮類': [],
+      '蔬菜生鮮類': [],
+      '調味與辛香料': [],
+      '其他/乾貨類': []
+    }
+
+    Object.values(ingredientMap).forEach(item => {
+      let displayText = ''
       if (item.unit === '次') {
-        return `${item.name} (共 ${item.totalAmount} 次)`
+        displayText = `${item.name} (共 ${item.totalAmount} 次)`
       } else if (item.unit) {
-        return `${item.name} ${item.totalAmount}${item.unit}`
+        displayText = `${item.name} ${item.totalAmount}${item.unit}`
       } else {
-        return `${item.name} ${item.totalAmount}`
+        displayText = `${item.name} ${item.totalAmount}`
+      }
+
+      const cat = categorizeIngredientName(item.name)
+      if (categories[cat]) {
+        categories[cat].push(displayText)
+      } else {
+        categories['其他/乾貨類'].push(displayText)
       }
     })
+
+    return categories
   }
 
-  const shoppingList = getAggregatedShoppingList()
+  const categorizedShoppingList = getCategorizedShoppingList()
 
-  // 匯出功能 1：文字檔備份
+  const getFlatShoppingList = () => {
+    let list = []
+    Object.values(categorizedShoppingList).forEach(items => {
+      list = list.concat(items)
+    })
+    return list
+  }
+  const shoppingList = getFlatShoppingList()
+
   const handleExportText = () => {
     let content = `=== 🍳 每週菜單與採買清單 ===\n`
     content += `週次範圍：${startDateStr} ~ ${endDateStr}\n\n`
@@ -311,8 +383,13 @@ export default function App() {
     if (shoppingList.length === 0) {
       content += `  (本週無採買需求)\n`
     } else {
-      shoppingList.forEach(ing => {
-        content += `  [ ] ${ing}\n`
+      Object.entries(categorizedShoppingList).forEach(([catName, items]) => {
+        if (items.length > 0) {
+          content += `[${catName}]\n`
+          items.forEach(ing => {
+            content += `  [ ] ${ing}\n`
+          })
+        }
       })
     }
 
@@ -325,7 +402,6 @@ export default function App() {
     URL.revokeObjectURL(url)
   }
 
-  // 匯出功能 2：將排程區塊截圖成圖片 (.png)
   const scheduleRef = useRef(null)
   const [isExporting, setIsExporting] = useState(false)
 
@@ -347,7 +423,6 @@ export default function App() {
       })
   }
 
-  // 匯出功能 3：將採買清單區塊截圖成圖片 (.png)
   const shoppingRef = useRef(null)
   const [isExportingShopping, setIsExportingShopping] = useState(false)
 
@@ -369,14 +444,20 @@ export default function App() {
       })
   }
 
-  // 複製採買清單到剪貼簿
   const [copyStatus, setCopyStatus] = useState(false)
   const handleCopyShoppingList = () => {
     if (shoppingList.length === 0) {
       alert('目前沒有採買清單可以複製！')
       return
     }
-    const text = `🛒 採買清單 (${startDateStr} ~ ${endDateStr})\n` + shoppingList.map(ing => `・[ ] ${ing}`).join('\n')
+    let text = `🛒 採買清單 (${startDateStr} ~ ${endDateStr})\n`
+    Object.entries(categorizedShoppingList).forEach(([catName, items]) => {
+      if (items.length > 0) {
+        text += `\n[${catName}]\n`
+        text += items.map(ing => `・[ ] ${ing}`).join('\n') + `\n`
+      }
+    })
+
     navigator.clipboard.writeText(text).then(() => {
       setCopyStatus(true)
       setTimeout(() => setCopyStatus(false), 2000)
@@ -399,7 +480,6 @@ export default function App() {
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
         boxSizing: 'border-box'
       }}
     >
@@ -431,8 +511,7 @@ export default function App() {
                 fontSize: '0.82rem',
                 display: 'flex', 
                 flexDirection: 'column',
-                gap: '0.15rem',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.01)'
+                gap: '0.15rem'
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -441,7 +520,7 @@ export default function App() {
                 </span>
                 <button 
                   onClick={() => handleRemoveFromDay(dayInfo.name, item.scheduleId)}
-                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.75rem', padding: 0, lineHeight: 1 }}
+                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.75rem', padding: 0 }}
                   title="移除"
                 >
                   ✕
@@ -461,36 +540,31 @@ export default function App() {
     <div style={{ maxWidth: '1600px', margin: '0 auto', padding: '2rem 2rem', fontFamily: 'sans-serif' }}>
       <h1 style={{ marginBottom: '1.5rem', textAlign: 'center' }}>🍳 每週菜單與採買清單</h1>
 
-      <div style={{ background: '#f0f4f8', padding: '1rem 1.5rem', borderRadius: '8px', marginBottom: '1.5rem', border: '1px solid #d9e2ec', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
+      {/* 頂部操作列：標題、檢視週次與置中的功能按鈕 */}
+      <div style={{ background: '#f0f4f8', padding: '1.2rem 1.5rem', borderRadius: '8px', marginBottom: '1.5rem', border: '1px solid #d9e2ec', display: 'flex', flexDirection: 'column', gap: '1rem', alignItems: 'center' }}>
+        <div style={{ textAlign: 'center' }}>
           <h2 style={{ margin: '0 0 0.3rem 0', color: '#1e293b', fontSize: '1.2rem' }}>📅 每週菜單排程</h2>
           <span style={{ color: '#555', fontSize: '0.95rem' }}>
             目前檢視週次：<strong>{currentWeekStart.getFullYear()}年 ({startDateStr} ~ {endDateStr})</strong>
           </span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button onClick={handlePrevWeek} style={navButtonStyle}>◀ 上一週</button>
-          <button onClick={handleThisWeek} style={{ ...navButtonStyle, background: '#cbd5e1' }}>回到本週</button>
-          <button onClick={handleNextWeek} style={navButtonStyle}>下一週 ▶</button>
-          <div style={{ width: '1px', height: '24px', background: '#cbd5e1', margin: '0 0.2rem' }}></div>
-          <button 
-            onClick={handleExportText} 
-            style={{ ...navButtonStyle, background: '#64748b', color: '#fff', border: 'none' }}
-            title="下載本週菜單與採買清單文字檔"
-          >
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', width: '100%' }}>
+          <button onClick={handleCopyLastWeekPlan} style={{ ...navButtonStyle, background: '#3b82f6', color: '#fff', border: 'none' }} title="將上週排程複製到本週">
+            📋 複製上週
+          </button>
+          <button onClick={handleClearWeekPlan} style={{ ...navButtonStyle, background: '#ef4444', color: '#fff', border: 'none' }} title="清空本週所有菜單">
+            🗑️ 清空本週
+          </button>
+          <button onClick={handleExportText} style={{ ...navButtonStyle, background: '#64748b', color: '#fff', border: 'none' }}>
             📄 匯出備份檔
           </button>
-          <button 
-            onClick={handleExportImage} 
-            disabled={isExporting}
-            style={{ ...navButtonStyle, background: '#0ea5e9', color: '#fff', border: 'none', opacity: isExporting ? 0.7 : 1 }}
-            title="將本週菜單排程截圖匯出成圖片"
-          >
+          <button onClick={handleExportImage} disabled={isExporting} style={{ ...navButtonStyle, background: '#0ea5e9', color: '#fff', border: 'none' }}>
             {isExporting ? '📸 處理中...' : '📥 匯出菜單圖片'}
           </button>
         </div>
       </div>
 
+      {/* 主體區塊：左側食譜清單，右側星期排程 */}
       <div style={{ display: 'grid', gridTemplateColumns: '290px 1fr', gap: '1.5rem', alignItems: 'stretch', marginBottom: '2rem' }}>
         
         {/* 左側：食譜清單 */}
@@ -499,7 +573,7 @@ export default function App() {
             📖 食譜清單 ({filteredRecipes.length} / {recipes.length})
           </h2>
           <p style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '-0.5rem', marginBottom: '0.8rem' }}>
-            💡 提示：按住卡片可拖曳至右側；點擊「編輯」可直接修改。
+            💡 提示：按住卡片可拖曳至右側；點擊「編輯」可修改名稱、分類與食材。
           </p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
@@ -543,52 +617,38 @@ export default function App() {
                       borderRadius: '6px', 
                       background: '#fff', 
                       boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-                      cursor: isEditing ? 'default' : 'grab',
-                      transition: 'border-color 0.2s, box-shadow 0.2s'
+                      cursor: isEditing ? 'default' : 'grab'
                     }}
-                    title={isEditing ? '' : '可直接按住拖曳至右側星期'}
                   >
                     {isEditing ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
-                          <input 
-                            type="text" 
-                            value={editName} 
-                            onChange={(e) => setEditName(e.target.value)} 
-                            placeholder="食譜名稱"
-                            style={{ flex: 1, padding: '0.3rem', fontSize: '0.9rem' }}
-                          />
-                          <select 
-                            value={editCategory} 
-                            onChange={(e) => setEditCategory(e.target.value)}
-                            style={{ padding: '0.3rem', fontSize: '0.9rem' }}
-                          >
-                            <option value="主菜">主菜</option>
-                            <option value="配菜">配菜</option>
-                            <option value="湯品">湯品</option>
-                            <option value="其他">其他</option>
-                          </select>
-                        </div>
+                        <input 
+                          type="text" 
+                          value={editName} 
+                          onChange={(e) => setEditName(e.target.value)} 
+                          placeholder="食譜名稱"
+                          style={{ width: '100%', padding: '0.35rem', fontSize: '0.85rem', boxSizing: 'border-box' }}
+                        />
+                        <select 
+                          value={editCategory} 
+                          onChange={(e) => setEditCategory(e.target.value)}
+                          style={{ width: '100%', padding: '0.35rem', fontSize: '0.85rem' }}
+                        >
+                          <option value="主菜">主菜</option>
+                          <option value="配菜">配菜</option>
+                          <option value="湯品">湯品</option>
+                          <option value="其他">其他</option>
+                        </select>
                         <input 
                           type="text" 
                           value={editIngredients} 
                           onChange={(e) => setEditIngredients(e.target.value)} 
                           placeholder="所需食材（逗號分隔）"
-                          style={{ width: '100%', padding: '0.3rem', fontSize: '0.9rem', boxSizing: 'border-box' }}
+                          style={{ width: '100%', padding: '0.35rem', fontSize: '0.85rem', boxSizing: 'border-box' }}
                         />
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.4rem', marginTop: '0.2rem' }}>
-                          <button 
-                            onClick={handleCancelEdit}
-                            style={{ background: '#e2e8f0', border: 'none', padding: '0.2rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
-                          >
-                            取消
-                          </button>
-                          <button 
-                            onClick={() => handleSaveEdit(recipe.id)}
-                            style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '0.2rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
-                          >
-                            儲存
-                          </button>
+                          <button onClick={handleCancelEdit} style={{ background: '#e2e8f0', border: 'none', padding: '0.25rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>取消</button>
+                          <button onClick={() => handleSaveEdit(recipe.id)} style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '0.25rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}>儲存</button>
                         </div>
                       </div>
                     ) : (
@@ -601,18 +661,8 @@ export default function App() {
                             </span>
                           </div>
                           <div style={{ display: 'flex', gap: '0.4rem' }}>
-                            <button 
-                              onClick={() => handleStartEdit(recipe)}
-                              style={{ background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '0.8rem', padding: 0, fontWeight: '500' }}
-                            >
-                              編輯
-                            </button>
-                            <button 
-                              onClick={() => handleDeleteRecipe(recipe.id)}
-                              style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.8rem', padding: 0 }}
-                            >
-                              ✕
-                            </button>
+                            <button onClick={() => handleStartEdit(recipe)} style={{ background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '0.8rem', padding: 0, fontWeight: '500' }}>編輯</button>
+                            <button onClick={() => handleDeleteRecipe(recipe.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.8rem', padding: 0 }}>✕</button>
                           </div>
                         </div>
                         
@@ -642,34 +692,21 @@ export default function App() {
           )}
         </div>
 
-        {/* 右側：星期排程區塊 */}
-        <div 
-          ref={scheduleRef} 
-          style={{ 
-            display: 'flex', 
-            flexDirection: 'column', 
-            gap: '1rem', 
-            flex: 1, 
-            justifyContent: 'center',
-            background: '#ffffff',
-            padding: '1rem',
-            borderRadius: '8px'
-          }}
-        >
-          {/* 上排 3 天 */}
-          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', maxWidth: '1000px', margin: '0 auto', width: '100%' }}>
-            <div style={{ flex: '0.1', height: '350px', minWidth: '180px' }}>
-              {renderDayCard(row1Days[0])}
-            </div>
-            <div style={{ flex: '0.1', height: '350px', minWidth: '180px' }}>
-              {renderDayCard(row1Days[1])}
-            </div>
-            <div style={{ flex: '0.1', height: '350px', minWidth: '180px' }}>
-              {renderDayCard(row1Days[2])}
-            </div>
+        {/* 右側：星期排程區塊 (包含上方移下來的切換週次按鈕) */}
+        <div ref={scheduleRef} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', flex: 1, justifyContent: 'center', background: '#ffffff', padding: '1rem', borderRadius: '8px' }}>
+          
+          {/* 切換週次按鈕列（改為靠右對齊） */}
+          <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', paddingRight: '0.2rem' }}>
+            <button onClick={handlePrevWeek} style={navButtonStyle}>◀ 上一週</button>
+            <button onClick={handleThisWeek} style={{ ...navButtonStyle, background: '#cbd5e1' }}>回到本週</button>
+            <button onClick={handleNextWeek} style={navButtonStyle}>下一週 ▶</button>
           </div>
 
-          {/* 下排 4 天 */}
+          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', maxWidth: '1000px', margin: '0 auto', width: '100%' }}>
+            <div style={{ flex: '0.1', height: '350px', minWidth: '180px' }}>{renderDayCard(row1Days[0])}</div>
+            <div style={{ flex: '0.1', height: '350px', minWidth: '180px' }}>{renderDayCard(row1Days[1])}</div>
+            <div style={{ flex: '0.1', height: '350px', minWidth: '180px' }}>{renderDayCard(row1Days[2])}</div>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(170px, 1fr))', gap: '1rem' }}>
             {row2Days.map((dayInfo) => (
               <div key={dayInfo.dateKey} style={{ height: '350px' }}>
@@ -677,101 +714,79 @@ export default function App() {
               </div>
             ))}
           </div>
-
         </div>
 
       </div>
 
-      {/* 本週智慧採買清單 (加上 ref 供截圖使用) */}
-      <div 
-        ref={shoppingRef}
-        style={{ background: '#fdf4ff', padding: '1.5rem', borderRadius: '8px', marginBottom: '2rem', border: '1px solid #f0abfc' }}
-      >
+      {/* 本週智慧採買清單 */}
+      <div ref={shoppingRef} style={{ background: '#fdf4ff', padding: '1.5rem', borderRadius: '8px', marginBottom: '2rem', border: '1px solid #f0abfc' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.8rem', flexWrap: 'wrap', gap: '0.5rem' }}>
           <h2 style={{ margin: 0, color: '#86198f', fontSize: '1.2rem' }}>🛒 本週智慧採買清單 ({startDateStr} ~ {endDateStr})</h2>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button 
-              onClick={handleCopyShoppingList}
-              style={{ 
-                background: copyStatus ? '#10b981' : '#c084fc', 
-                color: '#fff', 
-                border: 'none', 
-                padding: '0.35rem 0.8rem', 
-                borderRadius: '4px', 
-                cursor: 'pointer', 
-                fontSize: '0.85rem', 
-                fontWeight: 'bold',
-                transition: 'background 0.2s'
-              }}
-            >
-              {copyStatus ? '✓ 已複製到剪貼簿！' : '📋 一鍵複製採買清單'}
+            <button onClick={handleCopyShoppingList} style={{ background: copyStatus ? '#10b981' : '#c084fc', color: '#fff', border: 'none', padding: '0.35rem 0.8rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}>
+              {copyStatus ? '✓ 已複製到剪貼簿！' : '📋 一鍵複製分類採買清單'}
             </button>
-            <button 
-              onClick={handleExportShoppingImage} 
-              disabled={isExportingShopping}
-              style={{ 
-                background: '#a855f7', 
-                color: '#fff', 
-                border: 'none', 
-                padding: '0.35rem 0.8rem', 
-                borderRadius: '4px', 
-                cursor: 'pointer', 
-                fontSize: '0.85rem', 
-                fontWeight: 'bold',
-                opacity: isExportingShopping ? 0.7 : 1 
-              }}
-            >
+            <button onClick={handleExportShoppingImage} disabled={isExportingShopping} style={{ background: '#a855f7', color: '#fff', border: 'none', padding: '0.35rem 0.8rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}>
               {isExportingShopping ? '📸 處理中...' : '📥 匯出採買清單圖片'}
             </button>
           </div>
         </div>
 
         {shoppingList.length === 0 ? (
-          <p style={{ color: '#a21caf', margin: 0, fontSize: '0.95rem' }}>本週尚未安排任何菜色，排入菜單後這裡會自動統計所需食材！</p>
+          <p style={{ color: '#a21caf', margin: 0, fontSize: '0.95rem' }}>本週尚未安排任何菜色，排入菜單後這裡會自動依類別統計所需食材！</p>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.6rem' }}>
-            {shoppingList.map((ingredient, index) => {
-              const isChecked = !!weekCheckedMap[ingredient]
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+            {Object.entries(categorizedShoppingList).map(([categoryName, items]) => {
+              if (items.length === 0) return null
               return (
-                <label 
-                  key={index} 
-                  style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '0.5rem', 
-                    background: '#fff', 
-                    padding: '0.6rem 0.8rem', 
-                    borderRadius: '6px', 
-                    border: '1px solid #f5d0fe', 
-                    cursor: 'pointer',
-                    textDecoration: isChecked ? 'line-through' : 'none',
-                    color: isChecked ? '#9ca3af' : '#1f2937',
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
-                  }}
-                >
-                  <input 
-                    type="checkbox" 
-                    checked={isChecked} 
-                    onChange={() => handleToggleCheck(ingredient)}
-                    style={{ cursor: 'pointer', width: '16px', height: '16px' }}
-                  />
-                  <span style={{ fontSize: '0.95rem', wordBreak: 'break-all' }}>{ingredient}</span>
-                </label>
+                <div key={categoryName} style={{ background: '#fff', padding: '0.8rem 1rem', borderRadius: '6px', border: '1px solid #f5d0fe' }}>
+                  <h3 style={{ margin: '0 0 0.6rem 0', fontSize: '0.95rem', color: '#701a75', borderBottom: '1px solid #fae8ff', paddingBottom: '0.3rem' }}>
+                    📌 {categoryName}
+                  </h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.6rem' }}>
+                    {items.map((ingredient, index) => {
+                      const isChecked = !!weekCheckedMap[ingredient]
+                      return (
+                        <label 
+                          key={index} 
+                          style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: '0.5rem', 
+                            background: '#faf5ff', 
+                            padding: '0.5rem 0.7rem', 
+                            borderRadius: '4px', 
+                            border: '1px solid #f3e8ff', 
+                            cursor: 'pointer',
+                            textDecoration: isChecked ? 'line-through' : 'none',
+                            color: isChecked ? '#9ca3af' : '#1f2937'
+                          }}
+                        >
+                          <input 
+                            type="checkbox" 
+                            checked={isChecked} 
+                            onChange={() => handleToggleCheck(ingredient)}
+                            style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                          />
+                          <span style={{ fontSize: '0.9rem', wordBreak: 'break-all' }}>{ingredient}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
               )
             })}
           </div>
         )}
       </div>
 
+      {/* 新增食譜表單 */}
       <div style={{ background: '#f9f9f9', padding: '1.5rem', borderRadius: '8px', border: '1px solid #ddd' }}>
         <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.1rem' }}>➕ 新增食譜到資料庫</h2>
         <form onSubmit={handleAddRecipe} style={{ display: 'grid', gridTemplateColumns: '1fr 150px 1.5fr auto', gap: '1rem', alignItems: 'end' }}>
           <div>
             <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 'bold', fontSize: '0.9rem' }}>食譜名稱：</label>
-            <input 
-              type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：咖哩飯" 
-              style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
-            />
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：咖哩飯" style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }} />
           </div>
           <div>
             <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 'bold', fontSize: '0.9rem' }}>分類：</label>
@@ -784,10 +799,7 @@ export default function App() {
           </div>
           <div>
             <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 'bold', fontSize: '0.9rem' }}>所需食材（逗號分隔）：</label>
-            <input 
-              type="text" value={ingredients} onChange={(e) => setIngredients(e.target.value)} placeholder="例如：馬鈴薯 2顆, 紅蘿蔔 1條" 
-              style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
-            />
+            <input type="text" value={ingredients} onChange={(e) => setIngredients(e.target.value)} placeholder="例如：馬鈴薯 2顆, 紅蘿蔔 1條" style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }} />
           </div>
           <button type="submit" style={{ padding: '0.5rem 1.2rem', background: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', height: '36px' }}>
             ＋ 儲存
